@@ -20,18 +20,36 @@
     .top-btn { background: #23232e; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; border: none; font-weight: 600; width: auto; margin: 0; }
     .leave-btn { background: #2b141a; color: #ff4d6d; }
 
-    /* PC'den Paylaşılan Link Alanı */
     .shared-bar { padding: 8px 14px; background: #16161e; border-bottom: 1px solid #282834; font-size: 12px; display: none; line-height: 1.4; }
     .shared-bar span { color: #ccc; }
     .shared-bar a { color: #3b82f6; text-decoration: underline; word-break: break-all; }
 
-    /* Video Ekranı */
     .video-container { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
     video, #yt-player { width: 100%; height: 100%; max-height: 100%; border: none; }
     #yt-player { display: none; }
     #empty-placeholder { color: #666; font-size: 14px; text-align: center; padding: 20px; }
 
-    /* Sohbet Alanı */
+    /* iOS Dokunma Kilidi Aşma Butonu */
+    #ios-unlock-overlay {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.75);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 50;
+    }
+    #ios-unlock-btn {
+      background: #ff3366;
+      color: #fff;
+      padding: 14px 24px;
+      border-radius: 30px;
+      font-size: 15px;
+      font-weight: 700;
+      width: auto;
+      box-shadow: 0 4px 20px rgba(255, 51, 102, 0.5);
+    }
+
     .chat-drawer { height: 200px; background: #14141a; border-top: 1px solid #282832; display: flex; flex-direction: column; transition: height 0.25s ease; }
     .chat-drawer.hidden { height: 0; overflow: hidden; border: none; }
     .messages-area { flex: 1; padding: 10px; overflow-y: auto; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
@@ -44,7 +62,6 @@
   </style>
 </head>
 <body>
-  <!-- GİRİŞ EKRANI -->
   <div id="auth-screen">
     <div class="brand">izlio</div>
     <input type="text" id="usernameInput" placeholder="Kullanıcı Adı" />
@@ -54,7 +71,6 @@
     <div id="status">PC ile aynı Oda Adı ve Parolayı girin.</div>
   </div>
 
-  <!-- ANA İZLEME VE SOHBET EKRANI -->
   <div id="player-screen">
     <div class="top-bar">
       <span>Oda: <span class="room-tag" id="displayRoomName">--</span></span>
@@ -64,13 +80,15 @@
       </div>
     </div>
 
-    <!-- Odada Paylaşılan Link Burada Görünür -->
     <div class="shared-bar" id="sharedBar">
       <span>Paylaşılan link: </span>
       <a id="sharedLink" href="#" target="_blank"></a>
     </div>
 
     <div class="video-container">
+      <div id="ios-unlock-overlay">
+        <button id="ios-unlock-btn">▶️ Senkronizasyonu Başlat</button>
+      </div>
       <div id="empty-placeholder">Odada link paylaşılması bekleniyor...</div>
       <video id="mainVideo" controls playsinline style="display:none;"></video>
       <div id="yt-player"></div>
@@ -85,8 +103,7 @@
     </div>
   </div>
 
-  <!-- YouTube Resmi Oynatıcı API'si -->
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

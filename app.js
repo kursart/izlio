@@ -17,15 +17,17 @@ const sharedBar = document.getElementById("sharedBar");
 const sharedLink = document.getElementById("sharedLink");
 const chatDrawer = document.getElementById("chatDrawer");
 const toggleChatBtn = document.getElementById("toggleChatBtn");
+const iosUnlockOverlay = document.getElementById("ios-unlock-overlay");
+const iosUnlockBtn = document.getElementById("ios-unlock-btn");
 
 let currentRoom = null;
 let currentUser = "Misafir";
 let clientId = "mob_" + Math.random().toString(36).substring(2, 10);
 let ignoreLocalEventsUntil = 0;
 let lastProcessedUpdateAt = 0;
-let stateSource = null;
-let chatSource = null;
-let mediaSource = null;
+let lastMediaUrl = "";
+let renderedMessageKeys = new Set();
+let pollInterval = null;
 
 let activeMode = "none";
 let ytPlayer = null;
@@ -33,7 +35,6 @@ let ytReady = false;
 let pendingYoutubeId = null;
 let latestRoomState = null;
 let currentMediaData = null;
-let externalClockTimer = null;
 
 if (localStorage.getItem("izlio_user")) usernameInput.value = localStorage.getItem("izlio_user");
 if (localStorage.getItem("izlio_room")) roomInput.value = localStorage.getItem("izlio_room");
@@ -59,6 +60,20 @@ function extractYouTubeId(url) {
 toggleChatBtn.addEventListener("click", () => {
   chatDrawer.classList.toggle("hidden");
   toggleChatBtn.textContent = chatDrawer.classList.contains("hidden") ? "Sohbeti Aç" : "Sohbeti Gizle";
+});
+
+// iOS Safari Dokunma Kilidi Aşma Butonu
+iosUnlockBtn.addEventListener("click", () => {
+  iosUnlockOverlay.style.display = "none";
+  if (activeMode === "youtube" && ytPlayer && ytPlayer.playVideo) {
+    ytPlayer.playVideo();
+    if (latestRoomState) {
+      setTimeout(() => applyRemoteState(latestRoomState, true), 400);
+    }
+  } else if (activeMode === "html5" && videoElement) {
+    videoElement.play().catch(() => {});
+    if (latestRoomState) applyRemoteState(latestRoomState, true);
+  }
 });
 
 document.getElementById("joinBtn").addEventListener("click", async () => {
@@ -102,16 +117,17 @@ document.getElementById("joinBtn").addEventListener("click", async () => {
 
 document.getElementById("leaveBtn").addEventListener("click", () => {
   currentRoom = null;
-  if (stateSource) stateSource.close();
-  if (chatSource) chatSource.close();
-  if (mediaSource) mediaSource.close();
-  if (externalClockTimer) clearInterval(externalClockTimer);
+  if (pollInterval) clearInterval(pollInterval);
   if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
 
   videoElement.pause();
   videoElement.src = "";
   activeMode = "none";
+  lastMediaUrl = "";
   currentMediaData = null;
+  renderedMessageKeys.clear();
+  messagesArea.innerHTML = "";
+  iosUnlockOverlay.style.display = "none";
 
   playerScreen.style.display = "none";
   authScreen.style.display = "flex";
@@ -120,36 +136,59 @@ document.getElementById("leaveBtn").addEventListener("click", () => {
 
 function initMobileEngine() {
   ignoreLocalEventsUntil = Date.now() + 2000;
-  listenRoomState();
-  listenChatAndMedia();
   attachHtml5VideoEvents();
-  fetchInitialRoomData();
+
+  // iOS Safari'nin bağlantıyı uyutmaması için her 1.2 saniyede bir odayı doğrudan kontrol et
+  syncLoop();
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(syncLoop, 1200);
 }
 
-async function fetchInitialRoomData() {
+async function syncLoop() {
   if (!currentRoom) return;
   try {
     const res = await fetch(`${FIREBASE_URL}/rooms/${currentRoom}.json`);
     const roomData = await res.json();
     if (!roomData) return;
+
+    // 1. Paylaşılan Link Değiştiyse Güncelle
+    if (roomData.media && roomData.media.url && roomData.media.url !== lastMediaUrl) {
+      lastMediaUrl = roomData.media.url;
+      handleIncomingMedia(roomData.media);
+    }
+
+    // 2. Video Durumu Değiştiyse veya Saniye Kaydıysa Eşitle
     if (roomData.state) {
       latestRoomState = roomData.state;
+      const isNewCommand = roomData.state.senderId !== clientId && roomData.state.updatedAt > lastProcessedUpdateAt;
+
+      if (isNewCommand) {
+        lastProcessedUpdateAt = roomData.state.updatedAt;
+        applyRemoteState(roomData.state, false);
+      } else if (roomData.state.senderId !== clientId) {
+        // Sürekli arka plan kayma kontrolü (2.5 saniyeden fazla fark varsa sessizce düzelt)
+        applyRemoteState(roomData.state, false, true);
+      }
     }
-    if (roomData.media) {
-      handleIncomingMedia(roomData.media);
+
+    // 3. Yeni Sohbet Mesajlarını Ekrana Bas
+    if (roomData.messages) {
+      Object.entries(roomData.messages).forEach(([key, msg]) => {
+        if (!renderedMessageKeys.has(key)) {
+          renderedMessageKeys.add(key);
+          renderChatMessage(msg);
+        }
+      });
     }
   } catch (e) {}
 }
 
 function handleIncomingMedia(media) {
-  if (!media || !media.url) return;
   currentMediaData = media;
-
   sharedBar.style.display = "block";
   sharedLink.textContent = media.url;
   sharedLink.href = media.url;
   emptyPlaceholder.style.display = "none";
-  if (externalClockTimer) clearInterval(externalClockTimer);
 
   const ytId = extractYouTubeId(media.url);
 
@@ -158,6 +197,7 @@ function handleIncomingMedia(media) {
     videoElement.style.display = "none";
     videoElement.pause();
     ytContainer.style.display = "block";
+    iosUnlockOverlay.style.display = "flex"; // iOS dokunma izni için butonu göster
 
     if (ytReady) {
       loadYouTubeVideo(ytId);
@@ -169,21 +209,18 @@ function handleIncomingMedia(media) {
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
     ytContainer.style.display = "none";
     videoElement.style.display = "block";
+    iosUnlockOverlay.style.display = "flex";
 
-    if (videoElement.src !== media.url) {
-      videoElement.src = media.url;
-      videoElement.load();
-    }
-    if (latestRoomState) applyRemoteState(latestRoomState, true);
+    videoElement.src = media.url;
+    videoElement.load();
   } else {
-    // Harici dizi/film siteleri için Canlı Oda Zamanı ve Eşlik Ekranı
     activeMode = "external";
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
     ytContainer.style.display = "none";
     videoElement.style.display = "none";
+    iosUnlockOverlay.style.display = "none";
     emptyPlaceholder.style.display = "block";
     renderExternalSyncCard();
-    externalClockTimer = setInterval(renderExternalSyncCard, 1000);
   }
 }
 
@@ -200,21 +237,18 @@ function renderExternalSyncCard() {
 
   emptyPlaceholder.innerHTML = `
     <div style="background:#181822; border:1px solid #282834; padding:18px; border-radius:12px; max-width:300px; margin:auto;">
-      <div style="color:#ff3366; font-weight:700; font-size:12px; margin-bottom:6px; letter-spacing:0.5px;">CANLI ODA SÜRESİ</div>
+      <div style="color:#ff3366; font-weight:700; font-size:12px; margin-bottom:6px;">CANLI ODA SÜRESİ</div>
       <div style="color:#fff; font-size:32px; font-weight:800; margin-bottom:4px;">${formatTime(liveSec)}</div>
       <div style="color:#aaa; font-size:12px; margin-bottom:14px;">${statusText}</div>
       <a href="${currentMediaData ? currentMediaData.url : '#'}" target="_blank" style="display:block; background:#ff3366; color:#fff; text-decoration:none; padding:11px; border-radius:8px; font-weight:700; font-size:13px; margin-bottom:10px;">Safari'de Siteyi Aç</a>
-      <div style="color:#777; font-size:11px; line-height:1.4;">Bu site harici oynatmayı kısıtladığı için videoyu Safari'de açıp buradaki canlı saniyeye göre izleyebilirsiniz.</div>
+      <div style="color:#777; font-size:11px; line-height:1.4;">iOS Safari kısıtlaması nedeniyle bu site uygulama içinde açılamaz. Yukarıdaki butondan Safari'de açıp bu saniyeye göre izleyebilirsiniz.</div>
     </div>
   `;
 }
 
 function loadYouTubeVideo(videoId) {
-  if (ytPlayer) {
+  if (ytPlayer && ytPlayer.loadVideoById) {
     ytPlayer.loadVideoById(videoId);
-    setTimeout(() => {
-      if (latestRoomState) applyRemoteState(latestRoomState, true);
-    }, 1200);
     return;
   }
 
@@ -233,6 +267,7 @@ function loadYouTubeVideo(videoId) {
         if (Date.now() < ignoreLocalEventsUntil || activeMode !== "youtube") return;
         const currentTime = ytPlayer.getCurrentTime();
         if (event.data === YT.PlayerState.PLAYING) {
+          iosUnlockOverlay.style.display = "none";
           pushStateToFirebase("playing", currentTime, "başlattı");
         } else if (event.data === YT.PlayerState.PAUSED) {
           pushStateToFirebase("paused", currentTime, "durdurdu");
@@ -244,6 +279,7 @@ function loadYouTubeVideo(videoId) {
 
 function attachHtml5VideoEvents() {
   videoElement.addEventListener("play", () => {
+    iosUnlockOverlay.style.display = "none";
     if (Date.now() < ignoreLocalEventsUntil || activeMode !== "html5") return;
     pushStateToFirebase("playing", videoElement.currentTime, "başlattı");
   });
@@ -278,47 +314,36 @@ function pushStateToFirebase(status, timestamp, actionText) {
   });
 }
 
-function listenRoomState() {
-  if (stateSource) stateSource.close();
-  stateSource = new EventSource(`${FIREBASE_URL}/rooms/${currentRoom}/state.json`);
-
-  stateSource.addEventListener("put", (e) => {
-    try {
-      const parsed = JSON.parse(e.data);
-      if (!parsed || !parsed.data) return;
-      const state = parsed.data;
-      latestRoomState = state;
-
-      if (state.senderId === clientId) return;
-      if (state.updatedAt && state.updatedAt <= lastProcessedUpdateAt) return;
-      lastProcessedUpdateAt = state.updatedAt || Date.now();
-
-      applyRemoteState(state, false);
-    } catch (err) {}
-  });
-}
-
-function applyRemoteState(state, isInitialJoin = false) {
+function applyRemoteState(state, isInitialJoin = false, isDriftCheck = false) {
   if (!state) return;
 
   const ageInSeconds = state.updatedAt ? Math.max(0, (Date.now() - state.updatedAt) / 1000) : 0;
-  const targetTime = state.status === "playing" ? state.timestamp + ageInSeconds : state.timestamp;
-
-  ignoreLocalEventsUntil = Date.now() + 1400;
+  const targetTime = state.status === "playing" ? state.timestamp + (ageInSeconds < 60 ? ageInSeconds : 0) : state.timestamp;
 
   if (activeMode === "youtube" && ytPlayer && ytPlayer.seekTo) {
     const current = ytPlayer.getCurrentTime() || 0;
+    const ytState = ytPlayer.getPlayerState ? ytPlayer.getPlayerState() : -1;
+    const statusMismatch = (state.status === "playing" && ytState !== 1) || (state.status === "paused" && ytState === 1);
+
+    if (isDriftCheck && Math.abs(current - targetTime) < 2.5 && !statusMismatch) return;
+
+    ignoreLocalEventsUntil = Date.now() + 1500;
     if (Math.abs(current - targetTime) > 1.5 || isInitialJoin) {
       ytPlayer.seekTo(targetTime, true);
     }
-    if (state.status === "playing") {
+    if (state.status === "playing" && ytState !== 1) {
       ytPlayer.playVideo();
-    } else if (state.status === "paused") {
+    } else if (state.status === "paused" && ytState === 1) {
       ytPlayer.pauseVideo();
     }
   } else if (activeMode === "html5" && videoElement) {
     const timeDiff = Math.abs(videoElement.currentTime - targetTime);
-    if (timeDiff > 1.2 || isInitialJoin) videoElement.currentTime = targetTime;
+    const statusMismatch = (state.status === "playing" && videoElement.paused) || (state.status === "paused" && !videoElement.paused);
+
+    if (isDriftCheck && timeDiff < 2.5 && !statusMismatch) return;
+
+    ignoreLocalEventsUntil = Date.now() + 1500;
+    if (timeDiff > 1.5 || isInitialJoin) videoElement.currentTime = targetTime;
 
     if (state.status === "playing" && videoElement.paused) {
       videoElement.play().catch(() => {});
@@ -329,38 +354,9 @@ function applyRemoteState(state, isInitialJoin = false) {
     renderExternalSyncCard();
   }
 
-  if (!state.isHeartbeat) {
+  if (!isDriftCheck && !state.isHeartbeat) {
     addSystemMessage(`${state.updatedBy} videoyu ${state.actionText} (${formatTime(targetTime)})`);
   }
-}
-
-function listenChatAndMedia() {
-  if (chatSource) chatSource.close();
-  if (mediaSource) mediaSource.close();
-
-  mediaSource = new EventSource(`${FIREBASE_URL}/rooms/${currentRoom}/media.json`);
-  mediaSource.addEventListener("put", (e) => {
-    try {
-      const parsed = JSON.parse(e.data);
-      if (parsed && parsed.data && parsed.data.url) {
-        handleIncomingMedia(parsed.data);
-      }
-    } catch (err) {}
-  });
-
-  chatSource = new EventSource(`${FIREBASE_URL}/rooms/${currentRoom}/messages.json`);
-  chatSource.addEventListener("put", (e) => {
-    try {
-      const parsed = JSON.parse(e.data);
-      if (!parsed || !parsed.data) return;
-      if (parsed.path === "/") {
-        messagesArea.innerHTML = "";
-        Object.values(parsed.data).forEach((msg) => renderChatMessage(msg));
-      } else {
-        renderChatMessage(parsed.data);
-      }
-    } catch (err) {}
-  });
 }
 
 document.getElementById("sendBtn").addEventListener("click", sendChatMessage);
