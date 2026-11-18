@@ -91,12 +91,6 @@ document.getElementById("joinBtn").addEventListener("click", async () => {
     currentUser = username;
     displayRoomName.textContent = auth.roomName || roomDisplay;
 
-    // Mobil kullanıcıyı odanın aktif üyeleri listesine ekle
-    await fetch(`${FIREBASE_URL}/rooms/${currentRoom}/members/${clientId}.json`, {
-      method: "PUT",
-      body: JSON.stringify({ user: currentUser, joinedAt: Date.now() })
-    });
-
     authScreen.style.display = "none";
     playerScreen.style.display = "flex";
 
@@ -106,11 +100,8 @@ document.getElementById("joinBtn").addEventListener("click", async () => {
   }
 });
 
-// BAĞLANTIYI KES VE ODADA KİMSE KALMADIYSA ODAYI TAMAMEN SİL
-document.getElementById("leaveBtn").addEventListener("click", async () => {
-  const roomToClean = currentRoom;
+document.getElementById("leaveBtn").addEventListener("click", () => {
   currentRoom = null;
-
   if (stateSource) stateSource.close();
   if (chatSource) chatSource.close();
   if (mediaSource) mediaSource.close();
@@ -125,18 +116,6 @@ document.getElementById("leaveBtn").addEventListener("click", async () => {
   playerScreen.style.display = "none";
   authScreen.style.display = "flex";
   statusDiv.textContent = "Bağlantı kesildi.";
-
-  if (roomToClean) {
-    try {
-      await fetch(`${FIREBASE_URL}/rooms/${roomToClean}/members/${clientId}.json`, { method: "DELETE" });
-      const res = await fetch(`${FIREBASE_URL}/rooms/${roomToClean}/members.json`);
-      const members = await res.json();
-
-      if (!members || Object.keys(members).length === 0) {
-        await fetch(`${FIREBASE_URL}/rooms/${roomToClean}.json`, { method: "DELETE" });
-      }
-    } catch (e) {}
-  }
 });
 
 function initMobileEngine() {
@@ -144,6 +123,22 @@ function initMobileEngine() {
   listenRoomState();
   listenChatAndMedia();
   attachHtml5VideoEvents();
+  fetchInitialRoomData();
+}
+
+async function fetchInitialRoomData() {
+  if (!currentRoom) return;
+  try {
+    const res = await fetch(`${FIREBASE_URL}/rooms/${currentRoom}.json`);
+    const roomData = await res.json();
+    if (!roomData) return;
+    if (roomData.state) {
+      latestRoomState = roomData.state;
+    }
+    if (roomData.media) {
+      handleIncomingMedia(roomData.media);
+    }
+  } catch (e) {}
 }
 
 function handleIncomingMedia(media) {
@@ -169,19 +164,19 @@ function handleIncomingMedia(media) {
     } else {
       pendingYoutubeId = ytId;
     }
-  } else if (media.streamUrl || media.url.match(/\.(mp4|webm|m3u8|mov)(\?.*)?$/i)) {
-    const playableSrc = media.streamUrl || media.url;
+  } else if (media.url.match(/\.(mp4|webm|m3u8|mov)(\?.*)?$/i)) {
     activeMode = "html5";
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
     ytContainer.style.display = "none";
     videoElement.style.display = "block";
 
-    if (videoElement.src !== playableSrc) {
-      videoElement.src = playableSrc;
+    if (videoElement.src !== media.url) {
+      videoElement.src = media.url;
       videoElement.load();
     }
     if (latestRoomState) applyRemoteState(latestRoomState, true);
   } else {
+    // Harici dizi/film siteleri için Canlı Oda Zamanı ve Eşlik Ekranı
     activeMode = "external";
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
     ytContainer.style.display = "none";
@@ -204,11 +199,12 @@ function renderExternalSyncCard() {
   }
 
   emptyPlaceholder.innerHTML = `
-    <div style="background:#181822; border:1px solid #282834; padding:16px; border-radius:12px; max-width:290px; margin:auto;">
-      <div style="color:#ff3366; font-weight:700; font-size:13px; margin-bottom:6px;">CANLI ODA DURUMU</div>
-      <div style="color:#fff; font-size:26px; font-weight:800; margin-bottom:4px;">${formatTime(liveSec)}</div>
+    <div style="background:#181822; border:1px solid #282834; padding:18px; border-radius:12px; max-width:300px; margin:auto;">
+      <div style="color:#ff3366; font-weight:700; font-size:12px; margin-bottom:6px; letter-spacing:0.5px;">CANLI ODA SÜRESİ</div>
+      <div style="color:#fff; font-size:32px; font-weight:800; margin-bottom:4px;">${formatTime(liveSec)}</div>
       <div style="color:#aaa; font-size:12px; margin-bottom:14px;">${statusText}</div>
-      <a href="${currentMediaData ? currentMediaData.url : '#'}" target="_blank" style="display:block; background:#ff3366; color:#fff; text-decoration:none; padding:10px; border-radius:8px; font-weight:700; font-size:13px;">Safari'de Videoyu Aç</a>
+      <a href="${currentMediaData ? currentMediaData.url : '#'}" target="_blank" style="display:block; background:#ff3366; color:#fff; text-decoration:none; padding:11px; border-radius:8px; font-weight:700; font-size:13px; margin-bottom:10px;">Safari'de Siteyi Aç</a>
+      <div style="color:#777; font-size:11px; line-height:1.4;">Bu site harici oynatmayı kısıtladığı için videoyu Safari'de açıp buradaki canlı saniyeye göre izleyebilirsiniz.</div>
     </div>
   `;
 }
@@ -216,6 +212,9 @@ function renderExternalSyncCard() {
 function loadYouTubeVideo(videoId) {
   if (ytPlayer) {
     ytPlayer.loadVideoById(videoId);
+    setTimeout(() => {
+      if (latestRoomState) applyRemoteState(latestRoomState, true);
+    }, 1200);
     return;
   }
 
@@ -343,13 +342,8 @@ function listenChatAndMedia() {
   mediaSource.addEventListener("put", (e) => {
     try {
       const parsed = JSON.parse(e.data);
-      if (!parsed || !parsed.data) return;
-
-      if (parsed.path === "/") {
+      if (parsed && parsed.data && parsed.data.url) {
         handleIncomingMedia(parsed.data);
-      } else if (parsed.path === "/streamUrl" && currentMediaData) {
-        currentMediaData.streamUrl = parsed.data;
-        handleIncomingMedia(currentMediaData);
       }
     } catch (err) {}
   });
