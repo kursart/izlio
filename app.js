@@ -20,20 +20,21 @@ const toggleChatBtn = document.getElementById("toggleChatBtn");
 
 let currentRoom = null;
 let currentUser = "Misafir";
-let clientId = Math.random().toString(36).substring(2, 10);
+let clientId = "mob_" + Math.random().toString(36).substring(2, 10);
 let ignoreLocalEventsUntil = 0;
 let lastProcessedUpdateAt = 0;
 let stateSource = null;
 let chatSource = null;
 let mediaSource = null;
 
-let activeMode = "none"; // "youtube" | "html5" | "external"
+let activeMode = "none";
 let ytPlayer = null;
 let ytReady = false;
 let pendingYoutubeId = null;
 let latestRoomState = null;
+let currentMediaData = null;
+let externalClockTimer = null;
 
-// Kayıtlı bilgileri geri yükle
 if (localStorage.getItem("izlio_user")) usernameInput.value = localStorage.getItem("izlio_user");
 if (localStorage.getItem("izlio_room")) roomInput.value = localStorage.getItem("izlio_room");
 if (localStorage.getItem("izlio_pass")) passwordInput.value = localStorage.getItem("izlio_pass");
@@ -42,7 +43,6 @@ function sanitizeRoomName(name) {
   return name.trim().toLowerCase().replace(/[^a-z0-9ğüşıöç_-]/g, "-");
 }
 
-// YouTube API hazır olduğunda tetiklenir
 window.onYouTubeIframeAPIReady = function () {
   ytReady = true;
   if (pendingYoutubeId) {
@@ -56,13 +56,11 @@ function extractYouTubeId(url) {
   return match ? match[1] : null;
 }
 
-// Sohbeti Gizle / Göster
 toggleChatBtn.addEventListener("click", () => {
   chatDrawer.classList.toggle("hidden");
   toggleChatBtn.textContent = chatDrawer.classList.contains("hidden") ? "Sohbeti Aç" : "Sohbeti Gizle";
 });
 
-// Odaya Bağlan
 document.getElementById("joinBtn").addEventListener("click", async () => {
   const username = usernameInput.value.trim();
   const roomDisplay = roomInput.value.trim();
@@ -93,6 +91,12 @@ document.getElementById("joinBtn").addEventListener("click", async () => {
     currentUser = username;
     displayRoomName.textContent = auth.roomName || roomDisplay;
 
+    // Mobil kullanıcıyı odanın aktif üyeleri listesine ekle
+    await fetch(`${FIREBASE_URL}/rooms/${currentRoom}/members/${clientId}.json`, {
+      method: "PUT",
+      body: JSON.stringify({ user: currentUser, joinedAt: Date.now() })
+    });
+
     authScreen.style.display = "none";
     playerScreen.style.display = "flex";
 
@@ -102,18 +106,37 @@ document.getElementById("joinBtn").addEventListener("click", async () => {
   }
 });
 
-// Bağlantıyı Kes
-document.getElementById("leaveBtn").addEventListener("click", () => {
+// BAĞLANTIYI KES VE ODADA KİMSE KALMADIYSA ODAYI TAMAMEN SİL
+document.getElementById("leaveBtn").addEventListener("click", async () => {
+  const roomToClean = currentRoom;
+  currentRoom = null;
+
   if (stateSource) stateSource.close();
   if (chatSource) chatSource.close();
   if (mediaSource) mediaSource.close();
+  if (externalClockTimer) clearInterval(externalClockTimer);
   if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+
   videoElement.pause();
   videoElement.src = "";
   activeMode = "none";
+  currentMediaData = null;
+
   playerScreen.style.display = "none";
   authScreen.style.display = "flex";
   statusDiv.textContent = "Bağlantı kesildi.";
+
+  if (roomToClean) {
+    try {
+      await fetch(`${FIREBASE_URL}/rooms/${roomToClean}/members/${clientId}.json`, { method: "DELETE" });
+      const res = await fetch(`${FIREBASE_URL}/rooms/${roomToClean}/members.json`);
+      const members = await res.json();
+
+      if (!members || Object.keys(members).length === 0) {
+        await fetch(`${FIREBASE_URL}/rooms/${roomToClean}.json`, { method: "DELETE" });
+      }
+    } catch (e) {}
+  }
 });
 
 function initMobileEngine() {
@@ -123,19 +146,19 @@ function initMobileEngine() {
   attachHtml5VideoEvents();
 }
 
-// PC'den Gelen Linki Otomatik Algıla ve Oynat
-function handleIncomingMediaUrl(url) {
-  if (!url) return;
+function handleIncomingMedia(media) {
+  if (!media || !media.url) return;
+  currentMediaData = media;
 
   sharedBar.style.display = "block";
-  sharedLink.textContent = url;
-  sharedLink.href = url;
+  sharedLink.textContent = media.url;
+  sharedLink.href = media.url;
   emptyPlaceholder.style.display = "none";
+  if (externalClockTimer) clearInterval(externalClockTimer);
 
-  const ytId = extractYouTubeId(url);
+  const ytId = extractYouTubeId(media.url);
 
   if (ytId) {
-    // 1. DURUM: YouTube Linki Geldi
     activeMode = "youtube";
     videoElement.style.display = "none";
     videoElement.pause();
@@ -146,24 +169,48 @@ function handleIncomingMediaUrl(url) {
     } else {
       pendingYoutubeId = ytId;
     }
-  } else if (url.match(/\.(mp4|webm|m3u8|mov)(\?.*)?$/i)) {
-    // 2. DURUM: Doğrudan Video Dosyası Linki Geldi
+  } else if (media.streamUrl || media.url.match(/\.(mp4|webm|m3u8|mov)(\?.*)?$/i)) {
+    const playableSrc = media.streamUrl || media.url;
     activeMode = "html5";
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
     ytContainer.style.display = "none";
     videoElement.style.display = "block";
-    videoElement.src = url;
-    videoElement.load();
+
+    if (videoElement.src !== playableSrc) {
+      videoElement.src = playableSrc;
+      videoElement.load();
+    }
     if (latestRoomState) applyRemoteState(latestRoomState, true);
   } else {
-    // 3. DURUM: Harici Dizi/Film Sitesi Linki Geldi
     activeMode = "external";
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
     ytContainer.style.display = "none";
     videoElement.style.display = "none";
     emptyPlaceholder.style.display = "block";
-    emptyPlaceholder.innerHTML = `Bu site uygulama içi oynatmayı kısıtlıyor.<br><br>Yukarıdaki mavi <b>Paylaşılan linke</b> dokunarak Safari'de açabilirsiniz.`;
+    renderExternalSyncCard();
+    externalClockTimer = setInterval(renderExternalSyncCard, 1000);
   }
+}
+
+function renderExternalSyncCard() {
+  if (activeMode !== "external") return;
+  let liveSec = 0;
+  let statusText = "Duraklatıldı";
+
+  if (latestRoomState) {
+    const age = latestRoomState.status === "playing" ? Math.max(0, (Date.now() - latestRoomState.updatedAt) / 1000) : 0;
+    liveSec = latestRoomState.timestamp + age;
+    statusText = latestRoomState.status === "playing" ? "▶️ Oynatılıyor" : "⏸️ Duraklatıldı";
+  }
+
+  emptyPlaceholder.innerHTML = `
+    <div style="background:#181822; border:1px solid #282834; padding:16px; border-radius:12px; max-width:290px; margin:auto;">
+      <div style="color:#ff3366; font-weight:700; font-size:13px; margin-bottom:6px;">CANLI ODA DURUMU</div>
+      <div style="color:#fff; font-size:26px; font-weight:800; margin-bottom:4px;">${formatTime(liveSec)}</div>
+      <div style="color:#aaa; font-size:12px; margin-bottom:14px;">${statusText}</div>
+      <a href="${currentMediaData ? currentMediaData.url : '#'}" target="_blank" style="display:block; background:#ff3366; color:#fff; text-decoration:none; padding:10px; border-radius:8px; font-weight:700; font-size:13px;">Safari'de Videoyu Aç</a>
+    </div>
+  `;
 }
 
 function loadYouTubeVideo(videoId) {
@@ -279,9 +326,13 @@ function applyRemoteState(state, isInitialJoin = false) {
     } else if (state.status === "paused" && !videoElement.paused) {
       videoElement.pause();
     }
+  } else if (activeMode === "external") {
+    renderExternalSyncCard();
   }
 
-  addSystemMessage(`${state.updatedBy} videoyu ${state.actionText} (${formatTime(targetTime)})`);
+  if (!state.isHeartbeat) {
+    addSystemMessage(`${state.updatedBy} videoyu ${state.actionText} (${formatTime(targetTime)})`);
+  }
 }
 
 function listenChatAndMedia() {
@@ -292,8 +343,13 @@ function listenChatAndMedia() {
   mediaSource.addEventListener("put", (e) => {
     try {
       const parsed = JSON.parse(e.data);
-      if (parsed && parsed.data && parsed.data.url) {
-        handleIncomingMediaUrl(parsed.data.url);
+      if (!parsed || !parsed.data) return;
+
+      if (parsed.path === "/") {
+        handleIncomingMedia(parsed.data);
+      } else if (parsed.path === "/streamUrl" && currentMediaData) {
+        currentMediaData.streamUrl = parsed.data;
+        handleIncomingMedia(currentMediaData);
       }
     } catch (err) {}
   });
