@@ -3,129 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>izlio - Mobil</title>
+  <title>izlio</title>
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background-color: #0f0f13;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-      overflow: hidden;
-    }
-    #auth-screen {
-      position: absolute;
-      top: 0; left: 0; width: 100%; height: 100%;
-      background: #0f0f13;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      padding: 24px;
-      box-sizing: border-box;
-      z-index: 100;
-    }
-    .brand {
-      font-size: 32px;
-      font-weight: 800;
-      color: #ff3366;
-      margin-bottom: 24px;
-      letter-spacing: -1px;
-    }
-    input {
-      width: 100%;
-      max-width: 320px;
-      padding: 12px 14px;
-      margin-bottom: 12px;
-      border-radius: 10px;
-      border: 1px solid #282832;
-      background: #181820;
-      color: #fff;
-      font-size: 16px;
-      outline: none;
-      box-sizing: border-box;
-    }
+    body { margin: 0; padding: 0; background-color: #0f0f13; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    #auth-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #0f0f13; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 24px; box-sizing: border-box; z-index: 100; }
+    .brand { font-size: 36px; font-weight: 800; color: #ff3366; margin-bottom: 24px; letter-spacing: -1px; }
+    input { width: 100%; max-width: 320px; padding: 14px; margin-bottom: 12px; border-radius: 10px; border: 1px solid #282832; background: #181820; color: #fff; font-size: 16px; outline: none; box-sizing: border-box; }
     input:focus { border-color: #ff3366; }
-    button {
-      width: 100%;
-      max-width: 320px;
-      padding: 14px;
-      border: none;
-      border-radius: 10px;
-      font-weight: 700;
-      font-size: 16px;
-      cursor: pointer;
-      background: #ff3366;
-      color: #fff;
-      margin-top: 4px;
-    }
+    button { width: 100%; max-width: 320px; padding: 14px; border: none; border-radius: 10px; font-weight: 700; font-size: 16px; cursor: pointer; background: #ff3366; color: #fff; margin-top: 4px; }
     #status { font-size: 13px; color: #888; margin-top: 14px; text-align: center; }
 
-    /* Oynatıcı Ekranı */
-    #player-screen {
-      display: none;
-      flex-direction: column;
-      height: 100%;
-      width: 100%;
-    }
-    .top-bar {
-      padding: 12px 16px;
-      background: #14141a;
-      border-bottom: 1px solid #282832;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 14px;
-    }
+    #player-screen { display: none; flex-direction: column; height: 100%; width: 100%; }
+    .top-bar { padding: 10px 14px; background: #14141a; border-bottom: 1px solid #282832; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
     .room-tag { color: #ff3366; font-weight: 700; }
-    .leave-btn { background: #2b141a; color: #ff4d6d; padding: 6px 10px; border-radius: 6px; font-size: 12px; border: none; font-weight: 600; }
-    
-    .video-container {
-      flex: 1;
-      background: #000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-    }
-    video {
-      width: 100%;
-      max-height: 100%;
-    }
-    .chat-drawer {
-      height: 180px;
-      background: #14141a;
-      border-top: 1px solid #282832;
-      display: flex;
-      flex-direction: column;
-    }
-    .messages-area {
-      flex: 1;
-      padding: 10px;
-      overflow-y: auto;
-      font-size: 13px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
+    .top-actions { display: flex; gap: 6px; }
+    .top-btn { background: #23232e; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; border: none; font-weight: 600; width: auto; margin: 0; }
+    .leave-btn { background: #2b141a; color: #ff4d6d; }
+
+    /* PC'den Paylaşılan Link Alanı */
+    .shared-bar { padding: 8px 14px; background: #16161e; border-bottom: 1px solid #282834; font-size: 12px; display: none; line-height: 1.4; }
+    .shared-bar span { color: #ccc; }
+    .shared-bar a { color: #3b82f6; text-decoration: underline; word-break: break-all; }
+
+    /* Video Ekranı */
+    .video-container { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+    video, #yt-player { width: 100%; height: 100%; max-height: 100%; border: none; }
+    #yt-player { display: none; }
+    #empty-placeholder { color: #666; font-size: 14px; text-align: center; padding: 20px; }
+
+    /* Sohbet Alanı */
+    .chat-drawer { height: 200px; background: #14141a; border-top: 1px solid #282832; display: flex; flex-direction: column; transition: height 0.25s ease; }
+    .chat-drawer.hidden { height: 0; overflow: hidden; border: none; }
+    .messages-area { flex: 1; padding: 10px; overflow-y: auto; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
     .msg { background: #1e1e26; padding: 6px 10px; border-radius: 6px; }
     .msg.system { background: transparent; color: #777; font-size: 11px; text-align: center; }
     .msg strong { color: #ff3366; }
-    .chat-input-area {
-      padding: 8px;
-      display: flex;
-      gap: 6px;
-      border-top: 1px solid #282832;
-    }
-    .chat-input-area input { margin: 0; padding: 8px; font-size: 14px; }
-    .chat-input-area button { margin: 0; width: 70px; padding: 8px; font-size: 14px; }
+    .chat-input-area { padding: 8px; display: flex; gap: 6px; border-top: 1px solid #282832; }
+    .chat-input-area input { margin: 0; padding: 10px; font-size: 14px; }
+    .chat-input-area button { margin: 0; width: 80px; padding: 10px; font-size: 14px; }
   </style>
 </head>
 <body>
-
   <!-- GİRİŞ EKRANI -->
   <div id="auth-screen">
     <div class="brand">izlio</div>
@@ -136,25 +54,39 @@
     <div id="status">PC ile aynı Oda Adı ve Parolayı girin.</div>
   </div>
 
-  <!-- OYNATICI VE SOHBET EKRANI -->
+  <!-- ANA İZLEME VE SOHBET EKRANI -->
   <div id="player-screen">
     <div class="top-bar">
       <span>Oda: <span class="room-tag" id="displayRoomName">--</span></span>
-      <button class="leave-btn" id="leaveBtn">Bağlantıyı Kes</button>
+      <div class="top-actions">
+        <button class="top-btn" id="toggleChatBtn">Sohbeti Gizle</button>
+        <button class="top-btn leave-btn" id="leaveBtn">Bağlantıyı Kes</button>
+      </div>
     </div>
+
+    <!-- Odada Paylaşılan Link Burada Görünür -->
+    <div class="shared-bar" id="sharedBar">
+      <span>Paylaşılan link: </span>
+      <a id="sharedLink" href="#" target="_blank"></a>
+    </div>
+
     <div class="video-container">
-      <!-- Örnek test videosu (Daha sonra doğrudan link bağlayacağız) -->
-      <video id="mainVideo" controls playsinline src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"></video>
+      <div id="empty-placeholder">Odada link paylaşılması bekleniyor...</div>
+      <video id="mainVideo" controls playsinline style="display:none;"></video>
+      <div id="yt-player"></div>
     </div>
-    <div class="chat-drawer">
+
+    <div class="chat-drawer" id="chatDrawer">
       <div class="messages-area" id="messagesArea"></div>
       <div class="chat-input-area">
-        <input type="text" id="chatInput" placeholder="Mesaj..." />
+        <input type="text" id="chatInput" placeholder="Mesaj yaz..." />
         <button id="sendBtn">Gönder</button>
       </div>
     </div>
   </div>
 
+  <!-- YouTube Resmi Oynatıcı API'si -->
+  <script src="https://www.youtube.com/iframe_api"></script>
   <script src="app.js"></script>
 </body>
 </html>
